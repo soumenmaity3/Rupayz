@@ -30,7 +30,7 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity security) throws Exception {
         return security.csrf(customizer -> customizer.disable())
                 .authorizeRequests(request -> request
-                        .requestMatchers("/upi/signup", "/upi/login","/upi/hello","/upi/otp-send-store" ,"/upi/check-otp")
+                        .requestMatchers("/upi/signup", "/upi/login","/upi/hello","/upi/otp-send-store" ,"/upi/check-otp","/upi/use-otp")
                         .permitAll()
                         .anyRequest().authenticated())
                 .httpBasic(Customizer.withDefaults())

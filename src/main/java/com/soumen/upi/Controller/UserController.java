@@ -4,9 +4,11 @@ import com.soumen.upi.Authorization;
 import com.soumen.upi.Model.User.*;
 import com.soumen.upi.Repository.BankAccountRepo;
 import com.soumen.upi.Repository.BankRepo;
+import com.soumen.upi.Service.AccountInfo;
 import com.soumen.upi.Service.BankService;
 import com.soumen.upi.Service.OTPEmailService;
 import jakarta.mail.MessagingException;
+import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,7 +21,11 @@ import com.soumen.upi.Service.UserService;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
+
+import static java.math.BigDecimal.ZERO;
 
 @RestController
 @RequestMapping("/upi")
@@ -89,13 +95,10 @@ public class UserController {
         BCryptPasswordEncoder encoder = new BCryptPasswordEncoder(12);
         String email = login.getEmail();
         String rawPassword = login.getPassword();
-
         Optional<UPIUser> optionalUser = repo.userDetailsByEmail(email);
-
         if (optionalUser.isEmpty()) {
             return new ResponseEntity<>("User not found", HttpStatus.NOT_FOUND);
         }
-
         UPIUser user = optionalUser.get();
         String hashPassword = user.getPassword();
 
@@ -105,7 +108,7 @@ public class UserController {
 
         String token = service.verify(email, rawPassword);
 
-        return new ResponseEntity<>(new loginResponse(token, user), HttpStatus.OK);
+        return new ResponseEntity<>(token, HttpStatus.OK);
     }
 
     @GetMapping("/me")
@@ -219,6 +222,7 @@ public class UserController {
     @PostMapping("/open-bank")
     public ResponseEntity<?> openBankAccount(@RequestHeader("Authorization") String authHeader,
                                              @RequestBody BankDetails bank) {
+        System.out.println("Add Bank Account");
         String token = authorization.token(authHeader);
         String email = service.getEmailFromToken(token);
         Optional<UPIUser> user = repo.existEmail(email);
@@ -233,7 +237,7 @@ public class UserController {
         account.setAccountNumber(account.getAccountNumber());
         account.setIfscCode(existingBank.getIfscCode());
         account.setAccountType(AccountType.SAVINGS);
-        account.setBalance(BigDecimal.ZERO);
+        account.setBalance(ZERO);
         account.setIsPrimary(!bankAccountRepo.existsByEmail(user.get().getEmail()));
 
 
@@ -256,7 +260,7 @@ public class UserController {
         if (user.isEmpty()) {
             return new ResponseEntity<>("User not found", HttpStatus.NOT_FOUND);
         }
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+        if (amount == null || amount.compareTo(ZERO) <= 0) {
             return new ResponseEntity<>("Invalid amount", HttpStatus.BAD_REQUEST);
         }
         if (accountNumber == null || accountNumber.isEmpty()) {
@@ -267,35 +271,68 @@ public class UserController {
     }
 
     @PostMapping("/otp-send-store")
-    public ResponseEntity<?> otpSendStore(@RequestParam("email")String email,
-                                          @RequestParam("otp")String otp) throws MessagingException {
-        otpEmailService.sendOtp(email,otp);
-        int done=repo.storeOtp(email,otp);
-        if (done > 0) {
-            return new ResponseEntity<>("Done",HttpStatus.OK);
-        }else {
-            return new ResponseEntity<>("Have some error",HttpStatus.BAD_REQUEST);
+    public ResponseEntity<?> otpSendStore(@RequestParam("email") String email,
+                                          @RequestParam("otp") String otp) {
+        try {
+            otpEmailService.sendOtp(email, otp);
+            int done = repo.storeOtp(email, otp);
+            if (done > 0) {
+                return new ResponseEntity<>("Done", HttpStatus.OK);
+            } else {
+                return new ResponseEntity<>("Have some error", HttpStatus.BAD_REQUEST);
+            }
+        } catch (Exception e) {
+            System.out.println(e.getMessage());
+            return new ResponseEntity<>("Error", HttpStatus.BAD_GATEWAY);
         }
     }
 
-    @PostMapping("/check-otp")
-    public ResponseEntity<?> checkOTP(@RequestParam("email")String email,@RequestParam("otp")String otp){
-        boolean checked=repo.checkOtp(email,otp);
-        if (checked) {
-            int done=repo.otpUsed(email);
-            if (done > 0) {
-                return new ResponseEntity<>("Check done", HttpStatus.OK);
-            }else {
-                return new ResponseEntity<>("Have some error",HttpStatus.BAD_REQUEST);
+    @GetMapping("/check-otp")
+    public ResponseEntity<?> checkOtp(
+            @RequestParam("email") String email,
+            @RequestParam("otp") String otp) {
+        try {
+            if (email.isEmpty() && otp.isEmpty()) {
+                return new ResponseEntity<>("Enter all", HttpStatus.BAD_REQUEST);
             }
-        }else {
-            return new ResponseEntity<>("Have some error",HttpStatus.BAD_REQUEST);
+
+            Map<String, Object> response = new HashMap<>();
+            boolean isValid = repo.checkOtp(email, otp);
+
+            response.put("valid", isValid);
+
+            if (isValid) {
+                response.put("message", "OTP is valid");
+            } else {
+                response.put("message", "OTP is invalid or already used");
+            }
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            System.out.println(e.getMessage());
+        }
+        return ResponseEntity.badRequest().body("OTP invalid");
+    }
+
+    @PutMapping("/use-otp")
+    public ResponseEntity<Map<String, Object>> useOtp(@RequestParam("email") String email) {
+        Map<String, Object> response = new HashMap<>();
+        int rows = repo.afterUseOtpUsedOtpFalse(email);
+
+        if (rows > 0) {
+            response.put("success", true);
+            response.put("message", "OTP marked as used");
+            return ResponseEntity.ok(response);
+        } else {
+            response.put("success", false);
+            response.put("message", "Email not found or OTP already used");
+            return ResponseEntity.ok(response); // always 200 for easy client parsing
         }
     }
+
 
     @PostMapping("/set-as-primary")
     public ResponseEntity<?> setAsPrimary(@RequestHeader("Authorization") String authHeader,
-                                          @RequestParam("accountNo") String accountNo){
+                                          @RequestParam("accountNo") String accountNo) {
         String token = authorization.token(authHeader);
         String email = service.getEmailFromToken(token);
         bankAccountRepo.resetPrimaryForUser(email);
@@ -313,10 +350,121 @@ public class UserController {
         Optional<UPIUser> user = repo.existEmail(email);
         if (user.isEmpty()) {
             return new ResponseEntity<>("User not found", HttpStatus.NOT_FOUND);
-        }else {
+        } else {
             bankAccountRepo.setUpiPin(accountNo, upiPin);
             return ResponseEntity.ok("UPI PIN set successfully");
         }
     }
+
+    @GetMapping("/correct-pin")
+    public ResponseEntity<?> correctPin(@RequestHeader("Authorization") String authHeader,
+                                        @RequestParam("accountNo") String accountNo) {
+        String token = authorization.token(authHeader);
+        String email = service.getEmailFromToken(token);
+        Optional<UPIUser> user = repo.existEmail(email);
+        if (user.isEmpty()) {
+            return new ResponseEntity<>("User not found", HttpStatus.NOT_FOUND);
+        } else {
+            String pin = bankAccountRepo.getUpiPin(accountNo);
+            System.out.println(pin);
+            return ResponseEntity.ok(pin);
+        }
+    }
+
+    @Transactional
+    @PostMapping("/transaction")
+    public ResponseEntity<?> transaction(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestParam("am") BigDecimal amount,
+            @RequestParam("to") String to,
+            @RequestParam("from") String accountNo) {
+
+        String token = authorization.token(authHeader);
+        String email = service.getEmailFromToken(token);
+
+        Optional<UPIUser> user = repo.existEmail(email);
+        if (user.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
+
+        Optional<AccountInfo> recipientOpt = bankAccountRepo.getPrimaryAccountAndBalance(to);
+        if (recipientOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body("Recipient has no primary account");
+        }
+
+        // Prevent self-transfer
+        if (recipientOpt.get().getAccountNumber().equals(accountNo)) {
+            return ResponseEntity.badRequest().body("Cannot transfer to the same account");
+        }
+
+        Optional<BankAccount> verification = bankAccountRepo.verifyAccount(email, accountNo);
+        if (verification.isEmpty()) {
+            return ResponseEntity.badRequest().body("Invalid sender account");
+        }
+
+        BankAccount senderAccount = verification.get();
+        if (senderAccount.getBalance().compareTo(amount) < 0) {
+            return ResponseEntity.badRequest().body("Insufficient balance");
+        }
+
+        // Perform debit and credit
+        int debit = bankAccountRepo.debit(accountNo, amount);
+        if (debit <= 0) {
+            throw new RuntimeException("Debit failed");
+        }
+
+        int credit = bankAccountRepo.credit(to, amount);
+        if (credit <= 0) {
+            throw new RuntimeException("Credit failed");
+        }
+
+        return ResponseEntity.ok("success");
+    }
+
+    @Transactional
+    @PostMapping("/self-transaction")
+    public ResponseEntity<?> selfTransaction(@RequestHeader("Authorization") String authHeader,
+                                             @RequestParam("to") String toAcc,
+                                             @RequestParam("from") String fromAcc,
+                                             @RequestParam("am") BigDecimal amount) {
+        String token = authorization.token(authHeader);
+        String email = service.getEmailFromToken(token);
+
+        Optional<UPIUser> user = repo.existEmail(email);
+        if (user.isEmpty()) {
+            return new ResponseEntity<>("User not found", HttpStatus.NOT_FOUND);
+        }
+
+        // Get sender account
+        Optional<BankAccount> senderOpt = bankAccountRepo.verifyAccount(email, fromAcc);
+        if (senderOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body("Invalid sender account");
+        }
+
+        // Get recipient account
+        Optional<BankAccount> recipientOpt = bankAccountRepo.findByAccountNumber(toAcc);
+        if (recipientOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body("Recipient account not found");
+        }
+
+        BankAccount sender = senderOpt.get();
+        BankAccount recipient = recipientOpt.get();
+
+        // Check balance
+        if (sender.getBalance().compareTo(amount) < 0) {
+            return ResponseEntity.badRequest().body("Insufficient balance");
+        }
+
+        // Perform transaction
+        sender.setBalance(sender.getBalance().subtract(amount));
+        recipient.setBalance(recipient.getBalance().add(amount));
+
+        bankAccountRepo.save(sender);
+        bankAccountRepo.save(recipient);
+
+        System.out.println("Transaction Complete");
+        return ResponseEntity.ok("success");
+    }
+
 
 }

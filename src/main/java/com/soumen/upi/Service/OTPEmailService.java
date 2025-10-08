@@ -102,7 +102,7 @@ public class OTPEmailService {
                 "</html>\n";
         helper.setText(htmlMessage,true);
         System.out.println(otp);
-        helper.setFrom("ListOnGo App For One-Time Password (OTP) <otp.send.by.sm.team@gmail.com>");
+        helper.setFrom("Rupayz App For One-Time Password (OTP) <otp.send.by.sm.team@gmail.com>");
 
         mailSender.send(mimeMessage);
     }

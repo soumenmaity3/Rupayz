@@ -60,9 +60,9 @@ public class UPIUser {
         this.updatedAt = LocalDateTime.now();
 
         if (email != null && email.contains("@")) {
-            this.upiId = email.substring(0, email.indexOf("@")) + "@upi";
+            this.upiId = email.substring(0, email.indexOf("@")) + "@payz";
         } else {
-            this.upiId = UUID.randomUUID().toString().substring(0, 8) + "@upi";
+            this.upiId = UUID.randomUUID().toString().substring(0, 8) + "@payz";
         }
     }
 

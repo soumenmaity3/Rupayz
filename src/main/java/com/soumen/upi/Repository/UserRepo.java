@@ -48,6 +48,12 @@ public interface UserRepo extends JpaRepository<UPIUser, UUID> {
     @Query(value = "UPDATE upi_users SET otp_used = true WHERE email = :email",nativeQuery = true)
     int otpUsed(String email);
 
-    @Query(value = "SELECT COUNT(*) > 0 FROM upi_users WHERE email=:email AND otp=:otp AND otp_used=false", nativeQuery = true)
-    boolean checkOtp(String email,String otp);
+    @Query(value = "SELECT otp_used FROM upi_users WHERE email=:email AND otp=:otp ", nativeQuery = true)
+    Boolean checkOtp(String email, String otp);
+
+
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE upi_users SET otp_used = true WHERE email = :email",nativeQuery = true)
+    int afterUseOtpUsedOtpFalse(String email);
 }
